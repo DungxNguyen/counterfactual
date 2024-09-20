@@ -1,6 +1,7 @@
 from epiweeks import Week
-from train_abm import train_predict
+from train_abm_single_patch import train_predict
 from train_abm_privacy import train_predict_privacy
+
 import argparse
 import os
 import numpy as np

@@ -81,25 +81,31 @@ class MetapopulationSEIRM:
             # print(params["seed_status"])
             # input()
             self.init_compartments(params, seed_infection_status=params["seed_status"])
-            # self.migration_matrix = torch.clip(self.migration_matrix + 0.1 * torch.diag(params["adjustment_matrix"]), 0, 1)
-            self.migration_matrix = torch.clip(self.migration_matrix + params["adjustment_matrix"], 1e-29, 1)
-            self.migration_matrix = self.migration_matrix / self.migration_matrix.sum(dim=1)
-        # print(torch.diag(params["adjustment_matrix"]))
-        # print(params["adjustment_matrix"].shape)
-        # input()
-        
-        # self.migration_matrix = torch.clip(self.migration_matrix + 0.01 * params["adjustment_matrix"], 1e-29, 1)
-        # self.migration_matrix = self.migration_matrix / self.migration_matrix.sum(dim=1)
-        # print(sum(  self.migration_matrix < 0  ))
-        # print(self.migration_matrix.min())
+
+            # for COVID
+            if "COVID" in self.params["disease"]:
+                # print(self.migration_matrix[0, :].sum())
+                # input()
+                self.migration_matrix = torch.clip(self.migration_matrix + 0.1 * torch.diag(params["adjustment_matrix"]), 0, 1)
+                self.migration_matrix = self.migration_matrix / self.migration_matrix.sum(dim=1) # if normalization
+                # print(self.migration_matrix[0, :].sum())
+                # input()
+            else:
+                self.migration_matrix = torch.clip(self.migration_matrix + params["adjustment_matrix"], 1e-29, 1)
 
         N_eff = self.migration_matrix.T @ self.num_agents
         I_eff = self.migration_matrix.T @ self.state[:, 2].clone()
         E_eff = self.migration_matrix.T @ self.state[:, 1].clone()
 
+        
         beta_j_eff = I_eff
+        # print(beta_j_eff.shape, N_eff.shape)
+        # input()
+
         beta_j_eff = beta_j_eff / N_eff
-        beta_j_eff = beta_j_eff * params["beta"] # modify later
+        
+        beta_j_eff = beta_j_eff * params["beta"] # modify later 16
+        
         beta_j_eff = beta_j_eff * (
             (1 - params["kappa"]) * (1 - params["symprob"]) + params["symprob"]
         )
