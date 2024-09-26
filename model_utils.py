@@ -20,15 +20,15 @@ from opacus.layers import DPGRU, DPLSTM, DPRNN
 
 
 class MetapopulationSEIRM:
-    def __init__(self, params, device, num_patches, migration_matrix, num_agents, seed_infection_status={}):
+    def __init__(self, params, device, num_patches, migration_matrix, num_agents):
         super().__init__()
+        # initialize the parameters
         self.device = device
         self.num_patches = num_patches
         self.state = torch.zeros((num_patches, 5)).to(self.device)
         self.params = params
         self.migration_matrix = migration_matrix
         self.num_agents = num_agents
-        self.seed_infection_status = seed_infection_status
 
     def init_compartments(self, learnable_params, seed_infection_status={}):
         ''' let's get initial conditions '''
@@ -39,26 +39,13 @@ class MetapopulationSEIRM:
         for patch in range(self.num_patches):
             initial_conditions[patch][2] = initial_infections[patch]
             initial_conditions[patch][0] = self.num_agents[patch] - initial_infections[patch]
-            # print(f'initial infected in patch {patch}', initial_infections[patch])
         self.state = initial_conditions
-        # print(self.state.shape)
-        # input()
 
     def step(self, t, values, seed_status, adjustment_matrix):
         """
         Computes ODE states via equations
             state is the array of state value (S,E,I,R,M) for each patch
         """
-        # params = {
-        #     'beta': 0.65,
-        #     'kappa': 0.5,
-        #     "symprob": 0.2,
-        #     'epsilon': 0.5,
-        #     'alpha': values[0],
-        #     'gamma': values[1],
-        #     'delta': values[2],
-        #     'mor': values[3]
-        # }
 
         params = {
             'beta': values[0],
@@ -74,22 +61,11 @@ class MetapopulationSEIRM:
         }
 
         if t == 0:
-            # self.init_compartments(params, seed_infection_status={7: 50, 2: 10, 5:10, 9:30})
-            # {2:5, 3:5, 5:5, 7:5, 8:5, 9:5}
-            # print(self.seed_infection_status)
-            # input()
-            # print(params["seed_status"])
-            # input()
             self.init_compartments(params, seed_infection_status=params["seed_status"])
-
-            # for COVID
+            # pre-processing steps for for COVID and bogota dataset
             if "COVID" in self.params["disease"]:
-                # print(self.migration_matrix[0, :].sum())
-                # input()
                 self.migration_matrix = torch.clip(self.migration_matrix + 0.1 * torch.diag(params["adjustment_matrix"]), 0, 1)
                 self.migration_matrix = self.migration_matrix / self.migration_matrix.sum(dim=1) # if normalization
-                # print(self.migration_matrix[0, :].sum())
-                # input()
             else:
                 self.migration_matrix = torch.clip(self.migration_matrix + params["adjustment_matrix"], 1e-29, 1)
 
@@ -99,13 +75,8 @@ class MetapopulationSEIRM:
 
         
         beta_j_eff = I_eff
-        # print(beta_j_eff.shape, N_eff.shape)
-        # input()
-
         beta_j_eff = beta_j_eff / N_eff
-        
-        beta_j_eff = beta_j_eff * params["beta"] # modify later 16
-        
+        beta_j_eff = beta_j_eff * params["beta"]
         beta_j_eff = beta_j_eff * (
             (1 - params["kappa"]) * (1 - params["symprob"]) + params["symprob"]
         )
@@ -133,8 +104,94 @@ class MetapopulationSEIRM:
         self.state[:, 3] = params["gamma"] * self.state[:, 2].clone() + (1 - params["delta"]) * self.state[:, 3].clone()
         self.state[:, 4] = params["mor"] * self.state[:, 2].clone()
 
-        # (county_id, (time_stamp), state)
+        # (group_id, (time_stamp), state)
+        NEW_INFECTIONS_TODAY = self.state[:, 2].clone()
+        NEW_DEATHS_TODAY = self.state[:, 4].clone()
 
+        return NEW_DEATHS_TODAY, NEW_INFECTIONS_TODAY
+
+
+class MetapopulationSEIRMBeta:
+    def __init__(self, params, device, num_patches, migration_matrix, num_agents, seed_infection_status={}):
+        super().__init__()
+        self.device = device
+        self.num_patches = num_patches
+        self.state = torch.zeros((num_patches, 5)).to(self.device)
+        self.params = params
+        self.migration_matrix = migration_matrix
+        self.num_agents = num_agents
+        self.seed_infection_status = seed_infection_status
+
+    def init_compartments(self, learnable_params, seed_infection_status={}):
+        ''' let's get initial conditions '''
+        initial_infections = torch.zeros((self.num_patches)).to(self.device)
+        for state, value in enumerate(seed_infection_status):
+            initial_infections[state] = value
+        initial_conditions = torch.zeros((self.num_patches, 5)).to(self.device)
+        for patch in range(self.num_patches):
+            initial_conditions[patch][2] = initial_infections[patch]
+            initial_conditions[patch][0] = self.num_agents[patch] - initial_infections[patch]
+        self.state = initial_conditions
+
+    def step(self, t, values, seed_status, adjustment_matrix):
+        """
+        Computes ODE states via equations
+            state is the array of state value (S,E,I,R,M) for each patch
+        """
+
+        params = {
+            'kappa': values[0],
+            "symprob": values[1],
+            'epsilon': values[2],
+            'alpha': values[3],
+            'gamma': values[4],
+            'delta': values[5],
+            'mor': values[6],
+            "seed_status": (seed_status).long(),
+            "beta_matrix": adjustment_matrix
+        }
+
+        if t == 0:
+            self.init_compartments(params, seed_infection_status=params["seed_status"])
+
+        N_eff = self.migration_matrix.T @ self.num_agents
+        I_eff = self.migration_matrix.T @ self.state[:, 2].clone()
+        E_eff = self.migration_matrix.T @ self.state[:, 1].clone()
+
+        
+        beta_j_eff = I_eff
+
+        beta_j_eff = beta_j_eff / N_eff
+        beta_j_eff = beta_j_eff * params["beta_matrix"].mean(dim=0) # modify later 16
+        
+        beta_j_eff = beta_j_eff * (
+            (1 - params["kappa"]) * (1 - params["symprob"]) + params["symprob"]
+        )
+        beta_j_eff = torch.nan_to_num(beta_j_eff)
+
+
+        E_beta_j_eff = E_eff
+        E_beta_j_eff = E_beta_j_eff / N_eff
+        E_beta_j_eff = E_beta_j_eff * params["beta_matrix"].mean(dim=0)
+        E_beta_j_eff = E_beta_j_eff * (1 - params["epsilon"])
+        E_beta_j_eff = torch.nan_to_num(E_beta_j_eff)
+
+
+        # Infection force
+        beta_sum_eff = beta_j_eff + E_beta_j_eff
+        inf_force = self.migration_matrix @ beta_sum_eff
+
+        # New exposures during day t
+        new_inf = inf_force * self.state[:, 0].clone()
+        new_inf = torch.minimum(new_inf, self.state[:, 0].clone())
+
+        self.state[:, 0] = self.state[:, 0].clone() - new_inf + params["delta"] * self.state[:, 3].clone()
+        self.state[:, 1] = new_inf + (1 - params["alpha"]) * self.state[:, 1].clone()
+        self.state[:, 2] = params["alpha"] * self.state[:, 1].clone() + (1 - params["gamma"] - params["mor"]) * self.state[:, 2].clone()
+        self.state[:, 3] = params["gamma"] * self.state[:, 2].clone() + (1 - params["delta"]) * self.state[:, 3].clone()
+        self.state[:, 4] = params["mor"] * self.state[:, 2].clone()
+
+        # (group_id, (time_stamp), state)
         NEW_INFECTIONS_TODAY = self.state[:, 2].clone()
         NEW_DEATHS_TODAY = self.state[:, 4].clone()
 
