@@ -1,5 +1,5 @@
 from epiweeks import Week
-from train_abm_single_patch import train_predict
+from train_abm_beta_matrix import train_predict
 from train_abm_privacy import train_predict_privacy
 
 import argparse
@@ -10,33 +10,6 @@ from copy import copy
 import os
 import pandas as pd
 import pdb 
-
-def save_predictions(
-    disease: str,
-    model_name: str,
-    region: str,
-    pred_week: str,
-    death_predictions: np.array,
-    ):
-    """
-        Given an array w/ predictions, save as csv
-    """
-    data = np.array(
-        [
-            np.arange(len(death_predictions))+1,
-            death_predictions
-        ]
-    )
-    if disease=='COVID':
-        df = pd.DataFrame(data.transpose(),columns=['k_ahead','deaths'])
-    elif disease=='Flu':
-        df = pd.DataFrame(data.transpose(),columns=['k_ahead','ili'])
-    df['k_ahead'] = df['k_ahead'].astype('int8')
-    path = './Results/{}/{}/'.format(disease,region)
-    if not os.path.exists(path):
-        os.makedirs(path)
-    file_name = 'preds_{}_{}.csv'.format(model_name,pred_week)
-    df.to_csv(path+file_name,index=False)
 
 
 def save_params(
@@ -53,9 +26,12 @@ def save_params(
     if not os.path.exists(path):
         os.makedirs(path)
     file_name = 'params_{}_{}.csv'.format(model_name,pred_week)
+    # for three predictions made by NN, saving them respectively
     with open(path+file_name, "ab") as f:
-        np.savetxt(f, param_values[:-1], delimiter=',')
+        np.savetxt(f, param_values[:-2], delimiter=',')
+        np.savetxt(f, param_values[-2], delimiter=',')
         np.savetxt(f, param_values[-1], delimiter=',')
+        
 
 
 if __name__ == "__main__":
@@ -84,15 +60,14 @@ if __name__ == "__main__":
     model_name = args.model_name
     pred_ew = Week.fromstring(args.pred_ew)
 
-    def run_all_weeks(args, status):
+    def run_all_weeks(args):
         args.pred_week = pred_ew.cdcformat()
         try:
             if args.privacy:
-                counties_predicted, predictions, learned_params = train_predict_privacy(args, status)
+                counties_predicted, predictions, learned_params = train_predict_privacy(args)
             else:
-                counties_predicted, predictions, learned_params = train_predict(args, status) 
+                counties_predicted, predictions, learned_params = train_predict(args) 
             num_counties = len(counties_predicted)
-            # save_predictions(disease,model_name,counties_predicted,pred_ew,predictions[c,:])
             save_params(disease,model_name,pred_ew,learned_params)
         except Exception as e:
             print(f'exception: did not work for {args.state} week {pred_ew}: '+ str(e) + '\n')
@@ -102,17 +77,4 @@ if __name__ == "__main__":
     import itertools
     from tqdm import tqdm
 
-    stuff = list(range(10)) # number of counties
-    all_seed_data = []
-    for L in range(len(stuff) + 1):
-        for subset in itertools.combinations(stuff, L):
-            seed_status = {}
-            for item in subset:
-                seed_status[item] = 5
-            all_seed_data.append(seed_status)
-    
-    all_seed_data = [{2:5, 3:5, 5:5, 7:5, 8:5, 9:5}]
-    
-    for status in tqdm(all_seed_data):
-        print(status)
-        run_all_weeks(copy(args), status)
+    run_all_weeks(copy(args))
