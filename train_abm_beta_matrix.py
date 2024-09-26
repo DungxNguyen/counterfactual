@@ -26,7 +26,7 @@ CONFIGS = {
     "bogota": {
         "num_patch": 16,
         "learning_rate": 5e-5,
-        "train_days": 344,
+        "train_days": 343,
         "test_days": 28,
         "num_pub_features": 1
     },
@@ -61,7 +61,8 @@ class SeqDataset(torch.utils.data.Dataset):
 
     def __init__(self, csv_file, target_name):
         self.data = pd.read_csv(csv_file).values
-        self.targets = moving_average(pd.read_csv(csv_file)[target_name].values.ravel(),SMOOTH_WINDOW).reshape(-1,1)
+        self.targets = moving_average(pd.read_csv(csv_file)[target_name].values.ravel()[:343],SMOOTH_WINDOW).reshape(-1,1)
+        self.targets = np.concatenate([self.targets, pd.read_csv(csv_file)[target_name].values.ravel()[343:].reshape(-1,1)])
 
     def __len__(self):
         return len(self.data)
@@ -69,7 +70,6 @@ class SeqDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         X = torch.from_numpy(self.data[idx].astype(np.float32))
         y = self.targets[idx].astype(np.float32)
-        # print(y)
         return X, y
 
 # define the neural network fore predicting epi-parameters
@@ -98,7 +98,7 @@ class CalibNNTwoEncoderThreeOutputs(nn.Module):
 
         self.emb_model_2 = EmbedAttenSeq(
             dim_seq_in=CONFIGS[self.params["disease"]]["num_pub_features"],
-            dim_metadata=303,
+            dim_metadata=80,
             rnn_out=hidden_dim,
             dim_out=hidden_dim,
             n_layers=n_layers,
@@ -146,15 +146,6 @@ class CalibNNTwoEncoderThreeOutputs(nn.Module):
             ),
         ]
         self.out_layer3 = nn.Sequential(*self.out_layer3)
-
-
-        def init_weights(m):
-            if isinstance(m, nn.Linear):
-                torch.nn.init.xavier_uniform_(m.weight)
-                m.bias.data.fill_(0.01)
-        self.out_layer.apply(init_weights)
-        self.out_layer2.apply(init_weights)
-        self.out_layer3.apply(init_weights)
         self.min_values = torch.tensor(MIN_VAL_PARAMS[scale_output],device=self.device)
         self.max_values = torch.tensor(MAX_VAL_PARAMS[scale_output],device=self.device)
         self.min_values_2 = torch.tensor(MIN_VAL_PARAMS_2[scale_output],device=self.device)
@@ -418,6 +409,7 @@ def runner(params, devices, verbose, args):
                     else:
                         save_model(param_model,file_name,params['disease'],params['county_id'],params['pred_week'])
                     best_loss = epoch_loss
+                    print("current best loss is {}".format(best_loss))
                 print('epoch {} time (s): {:.2f}'.format(epi,time.time()- start))
     
 
@@ -429,6 +421,7 @@ def runner(params, devices, verbose, args):
         
         param_model = build_param_model(copy(params),metas_train_dim, X_train_dim,devices[0],CUSTOM_INIT=True)
         param_model.eval()
+        
         
         # load param model from the saved directory
         if params['joint']:
@@ -452,6 +445,7 @@ def runner(params, devices, verbose, args):
                     param_values = param_model_forward(param_model,params,x,meta)
                 else:
                     param_values = param_model_forward(param_model,params,x,meta)
+                
                 # forward simulator for several time steps
                 preds = forward_simulator(params,param_values,abm,num_step,counties,devices)
                 batch_predictions.append(preds)
@@ -473,6 +467,7 @@ def runner(params, devices, verbose, args):
             fig = plt.figure()
             plt.plot(target)
             plt.plot(predictions_train)
+            # print(target[(CONFIGS[params["disease"]]["train_days"]-10):CONFIGS[params["disease"]]["train_days"]], predictions_train[(CONFIGS[params["disease"]]["train_days"]-10):CONFIGS[params["disease"]]["train_days"]])
             rmse = np.sqrt(
             np.mean((target[:CONFIGS[params["disease"]]["train_days"]] -
                      predictions_train[:CONFIGS[params["disease"]]["train_days"]])**2))
