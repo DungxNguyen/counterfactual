@@ -12,12 +12,12 @@ conda env create -f enviroment.yml
 
 Step 1: Privatize the dataset by running the jupyet notebook "Pets_Input_Gen.ipynb" and put the generated file under the directory "./Data/Processed/"
 
-Step 2: Run the following command to train and predict forecasting models for the bogota city
+Step 2: Run the Data/Processed/process_rr_transaction.py file to transform the generated dataset into the aggregated transacation features, which will be saved as a ".pt" file under the directory "./Data/Processed/".
 
-The following command will train and predict for all age_groups in the Bogota city:
+Step 3: Run the following command to train and predict forecasting models for the bogota city
 
 ```bash
 python -u main.py -st MA -j -d cpu -ew 202036 --seed 1234 -m meta -di bogota
 ```
 
-(Note you have to manually change the Line 42 to the data you generated in Step 1)
+(Note you have to manually change the Line 42 to the data you generated in Step 2)
