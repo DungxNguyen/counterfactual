@@ -118,8 +118,8 @@ class MetapopulationSEIRMBeta:
         self.num_patches = num_patches
         self.state = torch.zeros((num_patches, 5)).to(self.device)
         self.params = params
-        self.migration_matrix = migration_matrix
-        self.num_agents = num_agents
+        self.migration_matrix = migration_matrix.to(self.device)
+        self.num_agents = num_agents.to(self.device)
         self.seed_infection_status = seed_infection_status
 
     def init_compartments(self, learnable_params, seed_infection_status={}):
@@ -153,7 +153,7 @@ class MetapopulationSEIRMBeta:
 
         if t == 0:
             self.init_compartments(params, seed_infection_status=params["seed_status"])
-
+        
         N_eff = self.migration_matrix.T @ self.num_agents
         I_eff = self.migration_matrix.T @ self.state[:, 2].clone()
         E_eff = self.migration_matrix.T @ self.state[:, 1].clone()

@@ -39,9 +39,9 @@ CONFIGS = {
 }
 
 # load the pre-processed transaction dataset and normalize the dataset
-data = torch.load("./Data/Processed/transaction_public.pt").to(torch.float32).unsqueeze(2) 
-data = torch.nn.functional.normalize(data,dim=0)
-meta2 = torch.eye(data.shape[0])
+data = torch.load("./Data/Processed/transaction_private_s2_eps1.pt").to(torch.float32).unsqueeze(2)
+data = torch.nn.functional.normalize(data,dim=0).to("cuda:0")
+meta2 = torch.eye(data.shape[0]).to("cuda:0")
 
 # define the prediction horizon
 DAYS_HEAD = 4*7  # 4 weeks ahead
@@ -71,6 +71,108 @@ class SeqDataset(torch.utils.data.Dataset):
         X = torch.from_numpy(self.data[idx].astype(np.float32))
         y = self.targets[idx].astype(np.float32)
         return X, y
+
+class CalibNNThreeOutputs(nn.Module):
+    def __init__(self, params, metas_train_dim, X_train_dim, device, training_weeks, hidden_dim=32, out_dim=1, n_layers=2, scale_output='abm-covid', bidirectional=True):
+        super().__init__()
+
+        self.device = device
+
+        self.training_weeks = training_weeks
+
+        self.params = params
+
+        ''' tune '''
+        hidden_dim=64
+        out_layer_dim = 32
+        
+        self.emb_model = EmbedAttenSeq(
+            dim_seq_in=X_train_dim,
+            dim_metadata=metas_train_dim,
+            rnn_out=hidden_dim,
+            dim_out=hidden_dim,
+            n_layers=n_layers,
+            bidirectional=bidirectional,
+        ) 
+
+        self.decoder = DecodeSeq(
+            dim_seq_in=1,
+            rnn_out=hidden_dim, # divides by 2 if bidirectional
+            dim_out=out_layer_dim,
+            n_layers=1,
+            bidirectional=True,
+        ) 
+
+        out_layer_width = out_layer_dim
+        self.out_layer =  [
+            nn.Linear(
+                in_features=out_layer_width, out_features=out_layer_width//2
+            ),
+            nn.ReLU(),
+            nn.Linear(
+                in_features=out_layer_width//2, out_features=out_dim
+            ),
+        ]
+        self.out_layer = nn.Sequential(*self.out_layer)
+
+        self.out_layer2 =  [
+            nn.Linear(
+                in_features=out_layer_width, out_features=out_layer_width//2
+            ),
+            nn.ReLU(),
+            nn.Linear(
+                in_features=out_layer_width//2, out_features=CONFIGS[self.params['disease']]["num_patch"]
+            ),
+        ]
+        self.out_layer2 = nn.Sequential(*self.out_layer2)
+
+        self.out_layer3 =  [
+            nn.Linear(
+                in_features=out_layer_width, out_features=out_layer_width//2
+            ),
+            nn.ReLU(),
+            nn.Linear(
+                in_features=out_layer_width//2, out_features=CONFIGS[self.params['disease']]["num_patch"]*CONFIGS[self.params['disease']]["num_patch"]
+            ),
+        ]
+        self.out_layer3 = nn.Sequential(*self.out_layer3)
+
+
+        def init_weights(m):
+            if isinstance(m, nn.Linear):
+                torch.nn.init.xavier_uniform_(m.weight)
+                m.bias.data.fill_(0.01)
+        self.out_layer.apply(init_weights)
+        self.out_layer2.apply(init_weights)
+        self.out_layer3.apply(init_weights)
+        self.min_values = torch.tensor(MIN_VAL_PARAMS[scale_output],device=self.device)
+        self.max_values = torch.tensor(MAX_VAL_PARAMS[scale_output],device=self.device)
+        self.min_values_2 = torch.tensor(MIN_VAL_PARAMS_2[scale_output],device=self.device)
+        self.max_values_2 = torch.tensor(MAX_VAL_PARAMS_2[scale_output],device=self.device)
+        self.sigmoid = nn.Sigmoid()
+    
+    def forward(self, x, meta):
+        x_embeds, encoder_hidden = self.emb_model.forward(x.transpose(1, 0), meta)
+        # create input that will tell the neural network which week it is predicting
+        # thus, we have one element in the sequence per each week of R0
+        time_seq = torch.arange(1,self.training_weeks+WEEKS_AHEAD+1).repeat(x_embeds.shape[0],1).unsqueeze(2)
+        Hi_data = ((time_seq - time_seq.min())/(time_seq.max() - time_seq.min())).to(self.device)
+        emb = self.decoder(Hi_data, encoder_hidden, x_embeds) 
+        out = self.out_layer(emb)
+        out = torch.mean(out, dim=0)
+        out = self.min_values + (self.max_values-self.min_values)*self.sigmoid(out) # (175, 5)
+
+        emb_mean = torch.mean(emb, dim=0)
+        # print(emb_mean.shape)
+        # emb_mean = torch.mean(emb_mean, dim=0)
+        emb_mean = emb_mean[-1, :]
+        
+        out2 = self.out_layer2(emb_mean)
+        out2 = self.min_values_2 + (self.max_values_2-self.min_values_2)*self.sigmoid(out2) # (5)
+
+        out3 = self.sigmoid(self.out_layer3(emb_mean).reshape((CONFIGS[self.params['disease']]["num_patch"], CONFIGS[self.params['disease']]["num_patch"])))
+
+        return out, out2, out3
 
 # define the neural network fore predicting epi-parameters
 class CalibNNTwoEncoderThreeOutputs(nn.Module):
@@ -145,7 +247,16 @@ class CalibNNTwoEncoderThreeOutputs(nn.Module):
                 in_features=out_layer_width//2, out_features=CONFIGS[self.params['disease']]["num_patch"]*CONFIGS[self.params['disease']]["num_patch"]
             ),
         ]
+
         self.out_layer3 = nn.Sequential(*self.out_layer3)
+        def init_weights(m):
+            if isinstance(m, nn.Linear):
+                torch.nn.init.xavier_uniform_(m.weight)
+                m.bias.data.fill_(0.01)
+        self.out_layer.apply(init_weights)
+        self.out_layer2.apply(init_weights)
+        self.out_layer3.apply(init_weights)
+
         self.min_values = torch.tensor(MIN_VAL_PARAMS[scale_output],device=self.device)
         self.max_values = torch.tensor(MAX_VAL_PARAMS[scale_output],device=self.device)
         self.min_values_2 = torch.tensor(MIN_VAL_PARAMS_2[scale_output],device=self.device)
@@ -227,6 +338,8 @@ def build_param_model(params,metas_train_dim,X_train_dim,device,CUSTOM_INIT=True
     ''' call constructor of param model depending on the model we want to run'''
     if params['model_name'] == 'meta':
         param_model = CalibNNTwoEncoderThreeOutputs(params, metas_train_dim, X_train_dim, device, training_weeks, out_dim=abm_param_dim,scale_output=scale_output_abm).to(device)
+        # param_model = CalibNNThreeOutputs(params, metas_train_dim, X_train_dim, device, training_weeks, out_dim=abm_param_dim,scale_output=scale_output_abm).to(device)
+
     return param_model
 
 def build_simulator(params,devices):
@@ -345,6 +458,7 @@ def runner(params, devices, verbose, args):
         ''' step 1: training  ''' 
         if train_flag:
             param_model.train()
+            param_model.to(devices[0])
             assert param_model != None
             opt = torch.optim.Adam(filter(lambda p: p.requires_grad, param_model.parameters()),lr=CONFIGS[params["disease"]]["learning_rate"],weight_decay=0.01)
             loss_fcn = torch.nn.MSELoss(reduction='none')
@@ -463,7 +577,7 @@ def runner(params, devices, verbose, args):
         all_rmses = []
         for state_idx, target_values in enumerate(y.unsqueeze(0)):
             target = torch.squeeze(target_values.detach()).numpy()
-            predictions_train = torch.squeeze(predictions.detach()[state_idx]).numpy()
+            predictions_train = torch.squeeze(predictions.detach()[state_idx]).cpu().numpy()
             fig = plt.figure()
             plt.plot(target)
             plt.plot(predictions_train)
