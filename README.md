@@ -10,21 +10,12 @@ conda env create -f enviroment.yml
 
 ## Training
 
-The following command will train and predict for all counties in MA state:
+Step 1: Privatize the dataset by running the jupyet notebook "Pets_Input_Gen.ipynb"
 
-```bash
-python -u main.py -st MA -j -d cpu -ew 202036 --seed 1234 -m meta -di COVID
-```
+Step 2: Run the following command to train and predict forecasting models for the bogota city
 
 The following command will train and predict for all age_groups in the Bogota city:
 
 ```bash
 python -u main.py -st MA -j -d cpu -ew 202036 --seed 1234 -m meta -di bogota
 ```
-
-The following command will differentially private train and predict for all counties in MA state:
-
-```bash
-python -u main.py -st MA -j -d cpu -ew 202036 --seed 1234 -m meta -di COVID --privacy
-```
-
