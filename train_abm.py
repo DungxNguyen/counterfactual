@@ -233,10 +233,6 @@ class CalibNNThreeOutputs(nn.Module):
         out2 = self.min_values_2 + (self.max_values_2-self.min_values_2)*self.sigmoid(out2) # (5)
 
         out3 = -self.sigmoid(self.out_layer3(emb_mean))
-        # out3 = self.sigmoid(out3) * 0.0004 - 0.0002
-        
-        # print(torch.sum(out3[:, 0]))
-        # input()
 
         return out, out2, out3
 class CalibNNTwoEncoderThreeOutputs(nn.Module):
@@ -436,6 +432,7 @@ class CalibNNTwoEncoder(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x, meta, x_2):
+        
         x_embeds, encoder_hidden = self.emb_model_1.forward(x.transpose(1, 0), meta)
         x_embeds_2, encoder_hidden_2 = self.emb_model_2.forward(x_2.transpose(1, 0))
         # print(x_2)
@@ -580,12 +577,7 @@ def param_model_forward(param_model,params,x,meta):
             # print(df)
             # input()
             df = torch.unsqueeze(torch.tensor(moving_average(df.ravel(),SMOOTH_WINDOW).reshape(-1, CONFIGS[params["disease"]]["num_pub_features"]), dtype=torch.float32), dim=0)
-
-
-            # print(df.shape)
-            # input()
-            # print(x.shape, df.shape)
-            # input()
+            
             param_prediction, seed_prediction, adjustment_matrix = param_model.forward(x, meta, df)  # time-varying
             action_value = [param_prediction, seed_prediction, adjustment_matrix]
         else:
@@ -628,7 +620,7 @@ def build_param_model(params,metas_train_dim,X_train_dim,device,CUSTOM_INIT=True
     elif params['model_name'] == 'ABM-expert':
         param_model = None
     elif params['model_name'] == 'meta':
-        param_model = CalibNNTwoEncoderThreeOutputs(params, metas_train_dim, X_train_dim, device, training_weeks, out_dim=abm_param_dim,scale_output=scale_output_abm).to(device)
+        param_model = CalibNNThreeOutputs(params, metas_train_dim, X_train_dim, device, training_weeks, out_dim=abm_param_dim,scale_output=scale_output_abm).to(device)
     elif 'ABM-pred-correction' in params['model_name']:
         # load the param model from ODE
         # NOTE: currently it uses only R0
@@ -876,6 +868,9 @@ def runner(params, devices, verbose, args, seed_infection_status):
                     if verbose:
                         print(torch.cat((y,predictions),2))
                     loss_weight = torch.ones((len(counties),training_num_steps,1)).to(devices[0])
+                    if params["disease"] == "bogota":
+                        loss_weight[:5, :, :] = 2
+                        loss_weight[10:13, :, :] = 2
                     loss = (loss_weight*loss_fcn(y, predictions)).mean()
                     loss.backward()
 

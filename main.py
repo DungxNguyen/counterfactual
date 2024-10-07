@@ -17,12 +17,13 @@ def save_params(
     model_name: str,
     pred_week: str,
     param_values: np.array,
+    args
     ):
     """
         Given an array w/ predictions, save as csv
     """
     
-    path = './Results/{}/'.format(disease)
+    path = './Results/{}/{}'.format(disease, args.date)
     if not os.path.exists(path):
         os.makedirs(path)
     file_name = 'params_{}_{}.csv'.format(model_name,pred_week)
@@ -50,6 +51,7 @@ if __name__ == "__main__":
     parser.add_argument('-no','--noise', type=int, help='Noise level for robustness experiments', default = 0)
     parser.add_argument('-f', '--results_file_postfix', help='Postfix to be appended to output dir for ease of interpretation', default = '')
     parser.add_argument('-da', '-dataset', default="./Data/Processed/county_data.csv")
+    parser.add_argument('-date', default="03-03")
     parser.add_argument('--privacy', action="store_true")
     # parser.set_defaults(joint=True)  # make true when removing no joint
     parser.set_defaults(inference_only=False)  # make true when removing no joint
@@ -68,7 +70,7 @@ if __name__ == "__main__":
             else:
                 counties_predicted, predictions, learned_params = train_predict(args) 
             num_counties = len(counties_predicted)
-            save_params(disease,model_name,pred_ew,learned_params)
+            save_params(disease,model_name,pred_ew,learned_params, args)
         except Exception as e:
             print(f'exception: did not work for {args.state} week {pred_ew}: '+ str(e) + '\n')
             traceback.print_exc()

@@ -21,27 +21,9 @@ BENCHMARK_TRAIN = False
 NUM_EPOCHS_DIFF = 2000
 print("---- MAIN IMPORTS SUCCESSFUL -----")
 
-# configs for different datasets
-CONFIGS = {
-    "bogota": {
-        "num_patch": 16,
-        "learning_rate": 5e-5,
-        "train_days": 343,
-        "test_days": 28,
-        "num_pub_features": 1
-    },
-    "COVID": {
-        "num_patch": 10,
-        "learning_rate": 1e-4,
-        "train_days": 175,
-        "test_days": 28
-    }
-}
 
-# load the pre-processed transaction dataset and normalize the dataset
-data = torch.load("./Data/Processed/transaction_private_s2_eps1.pt").to(torch.float32).unsqueeze(2)
-data = torch.nn.functional.normalize(data,dim=0).to("cuda:0")
-meta2 = torch.eye(data.shape[0]).to("cuda:0")
+
+
 
 # define the prediction horizon
 DAYS_HEAD = 4*7  # 4 weeks ahead
@@ -61,8 +43,8 @@ class SeqDataset(torch.utils.data.Dataset):
 
     def __init__(self, csv_file, target_name):
         self.data = pd.read_csv(csv_file).values
-        self.targets = moving_average(pd.read_csv(csv_file)[target_name].values.ravel()[:343],SMOOTH_WINDOW).reshape(-1,1)
-        self.targets = np.concatenate([self.targets, pd.read_csv(csv_file)[target_name].values.ravel()[343:].reshape(-1,1)])
+        self.targets = moving_average(pd.read_csv(csv_file)[target_name].values.ravel()[:CONFIGS['bogota']["train_days"]],SMOOTH_WINDOW).reshape(-1,1)
+        self.targets = np.concatenate([self.targets, pd.read_csv(csv_file)[target_name].values.ravel()[CONFIGS['bogota']["train_days"]:].reshape(-1,1)])
 
     def __len__(self):
         return len(self.data)
@@ -292,15 +274,15 @@ class CalibNNTwoEncoderThreeOutputs(nn.Module):
         
         return out, out2, out3
 
-def save_model(model,file_name,disease,region,week):
-    PATH = os.path.join(SAVE_MODEL_PATH,disease,region)
+def save_model(model,file_name,disease,region,week, args):
+    PATH = os.path.join(SAVE_MODEL_PATH,disease,region, args.date)
     print(PATH)
     if not os.path.exists(PATH):
         os.makedirs(PATH)
     torch.save(model.state_dict(), PATH+'/' + file_name+' '+week + ".pth")
 
-def load_model(model,file_name,disease,region,week,device):
-    PATH = os.path.join(SAVE_MODEL_PATH,disease,region)
+def load_model(model,file_name,disease,region,week,device, args):
+    PATH = os.path.join(SAVE_MODEL_PATH,disease,region, args.date)
     print(file_name)
     model.load_state_dict(torch.load(PATH+'/' + file_name+' '+week + ".pth",map_location=device))
     return model
@@ -423,8 +405,8 @@ def runner(params, devices, verbose, args):
                     fetch_county_data_covid(params['state'],params['county_id'],pred_week=params['pred_week'],batch_size=batch_size,noise_level=params['noise_level'])
             params['num_steps'] = seqlen
         elif params['disease']=='bogota':
-            train_dataset = SeqDataset("./Data/Processed/train.csv", "cases")
-            test_dataset = SeqDataset("./Data/Processed/test.csv", "cases")
+            train_dataset = SeqDataset("./Data/Processed/train_{}.csv".format(args.date), "cases")
+            test_dataset = SeqDataset("./Data/Processed/test_{}.csv".format(args.date), "cases")
 
             train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=500, shuffle=False)
             test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=500, shuffle=False)
@@ -519,9 +501,9 @@ def runner(params, devices, verbose, args):
                 ''' save best model '''
                 if epoch_loss < best_loss:
                     if params['joint']:
-                        save_model(param_model,file_name,params['disease'],'joint',params['pred_week'])
+                        save_model(param_model,file_name,params['disease'],'joint',params['pred_week'], args)
                     else:
-                        save_model(param_model,file_name,params['disease'],params['county_id'],params['pred_week'])
+                        save_model(param_model,file_name,params['disease'],params['county_id'],params['pred_week'], args)
                     best_loss = epoch_loss
                     print("current best loss is {}".format(best_loss))
                 print('epoch {} time (s): {:.2f}'.format(epi,time.time()- start))
@@ -539,9 +521,9 @@ def runner(params, devices, verbose, args):
         
         # load param model from the saved directory
         if params['joint']:
-            param_model = load_model(param_model,file_name,params['disease'],'joint',params['pred_week'],devices[0])
+            param_model = load_model(param_model,file_name,params['disease'],'joint',params['pred_week'],devices[0], args)
         else:
-            param_model = load_model(param_model,file_name,params['disease'],params['county_id'],params['pred_week'],devices[0])
+            param_model = load_model(param_model,file_name,params['disease'],params['county_id'],params['pred_week'],devices[0], args)
 
         num_step = training_num_steps + DAYS_HEAD # adding number of prediction horizon to the simulation step
         batch_predictions = []
@@ -575,6 +557,8 @@ def runner(params, devices, verbose, args):
 
         # calculate training and testing RMSE values
         all_rmses = []
+        all_maes = []
+        training_mae = []
         for state_idx, target_values in enumerate(y.unsqueeze(0)):
             target = torch.squeeze(target_values.detach()).numpy()
             predictions_train = torch.squeeze(predictions.detach()[state_idx]).cpu().numpy()
@@ -588,13 +572,23 @@ def runner(params, devices, verbose, args):
             rmse_test = np.sqrt(
             np.mean((target[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])] -
                      predictions_train[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])])**2))
+            mae_train = np.mean(np.absolute((target[:CONFIGS[params["disease"]]["train_days"]] -
+                     predictions_train[:CONFIGS[params["disease"]]["train_days"]])))
+            
+            mae_test = np.mean(np.absolute(target[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])] -
+                     predictions_train[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])]))
+
             plt.title('Training RMSE: {:.2f} Testing RMSE: {:.2f}'.format(rmse, rmse_test))
             plt.xlabel("TimeStamp")
             plt.ylabel("Mortality Number")
             plt.legend(["Ground-truth", "Predictions"])
-            fig.savefig(f"State_{state_idx}.png")
+            fig.savefig(f"State_{state_idx}_{args.date}.png")
             all_rmses.append(rmse_test)
-        print(sum(all_rmses)/len(all_rmses))
+            all_maes.append(mae_test)
+            training_mae.append(mae_train)
+        print('RMSE: ', sum(all_rmses)/len(all_rmses))
+        print('testing MAE: ', sum(all_maes)/len(all_maes))
+        print('training MAE: ', sum(training_mae)/len(training_mae))
 
         # we only care about the last predictions
         # predictions are weekly, so we only care about the last 4
@@ -637,6 +631,33 @@ def train_predict(args):
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+
+    global data, meta2
+    # load the pre-processed transaction dataset and normalize the dataset
+    data = torch.load("./Data/Processed/transaction_private_lap_{}.pt".format(args.date)).to(torch.float32).unsqueeze(2)
+    data = torch.nn.functional.normalize(data,dim=0).to("cuda:0")
+    meta2 = torch.eye(data.shape[0]).to("cuda:0")
+
+    global CONFIGS
+
+    # configs for different datasets
+    CONFIGS = {
+        "bogota": {
+            "num_patch": 16,
+            "learning_rate": 5e-5,
+            "train_days": 343 + eval(args.date.split("_")[0]) * 7,
+            "test_days": 28,
+            "num_pub_features": 1
+        },
+        "COVID": {
+            "num_patch": 10,
+            "learning_rate": 1e-4,
+            "train_days": 175,
+            "test_days": 28
+        }
+    }
+
+
 
     params = {}            
     params['seed'] = args.seed
