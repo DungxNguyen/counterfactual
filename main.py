@@ -26,7 +26,7 @@ def save_params(
     path = './Results/{}/{}'.format(disease, args.date)
     if not os.path.exists(path):
         os.makedirs(path)
-    file_name = 'params_{}_{}.csv'.format(model_name,pred_week)
+    file_name = '/params_{}_{}.csv'.format(model_name,pred_week)
     # for three predictions made by NN, saving them respectively
     with open(path+file_name, "ab") as f:
         np.savetxt(f, param_values[:-2], delimiter=',')

@@ -8,12 +8,12 @@ import time
 from torch.autograd import Variable
 from data_utils import WEEKS_AHEAD, states, counties
 from copy import copy
-import matplotlib.pyplot as plt
 from abm_model import GradABM
 from model_utils import EmbedAttenSeq, fetch_county_data_covid, fetch_county_data_flu, DecodeSeq, SEIRM, SIRS, MetapopulationSEIRM, fetch_age_group_data_covid, moving_average, MetapopulationSEIRMBeta
 import pdb
 import opendp
 import pandas as pd
+from visualize_results import *
             
 # if calculating training time
 BENCHMARK_TRAIN = False
@@ -559,9 +559,7 @@ def runner(params, devices, verbose, args):
         for state_idx, target_values in enumerate(y.unsqueeze(0)):
             target = torch.squeeze(target_values.detach()).numpy()
             predictions_train = torch.squeeze(predictions.detach()[state_idx]).cpu().numpy()
-            fig = plt.figure()
-            plt.plot(target)
-            plt.plot(predictions_train)
+            
             # print(target[(CONFIGS[params["disease"]]["train_days"]-10):CONFIGS[params["disease"]]["train_days"]], predictions_train[(CONFIGS[params["disease"]]["train_days"]-10):CONFIGS[params["disease"]]["train_days"]])
             rmse = np.sqrt(
             np.mean((target[:CONFIGS[params["disease"]]["train_days"]] -
@@ -575,11 +573,8 @@ def runner(params, devices, verbose, args):
             mae_test = np.mean(np.absolute(target[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])] -
                      predictions_train[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])]))
 
-            plt.title('Training RMSE: {:.2f} Testing RMSE: {:.2f}'.format(rmse, rmse_test))
-            plt.xlabel("TimeStamp")
-            plt.ylabel("Mortality Number")
-            plt.legend(["Ground-truth", "Predictions"])
-            fig.savefig(os.path.join("Figure-Prediction", f"State_{state_idx}_{args.date}.png"))
+            plot_predictions(target, predictions_train, rmse, rmse_test, state_idx, args)
+            
             all_rmses.append(rmse_test)
             all_maes.append(mae_test)
             all_mapes.append(np.mean(np.abs((target[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])] -
@@ -605,21 +600,9 @@ def runner(params, devices, verbose, args):
 
         ''' plot losses '''
         # only if trained, plot training loss curve
-        if train_flag:
-            disease = params['disease']
-            if params['joint']:
-                FIGPATH = f'./Figures/{disease}/joint/'
-            else:
-                county_id = params['county_id']
-                FIGPATH = f'./Figures/{disease}/{county_id}/'
-            if not os.path.exists(FIGPATH):
-                os.makedirs(FIGPATH)
-            fig = plt.figure()
-            ax = fig.add_subplot(1,1,1)
-            ax.plot(losses)
-            # ax.set_ylim(2.5, 6.5)
-            date = params['date']
-            fig.savefig(FIGPATH+f'/losses_{date}_{args.privacy}.png')
+        if train_flag:   
+            # plot all the losses
+            plot_losses(losses, params, args)
         print("-"*60)
         return counties_predicted, np.array(predictions), learned_params
 
@@ -680,6 +663,7 @@ def train_predict(args):
         # verify county belong to state
         assert params['county_id'] in counties[params['state']]
     params['model_name'] = args.model_name
+    params['date'] = args.date
 
     if args.dev == ['cpu']:
         devices = [torch.device("cpu")]
@@ -729,3 +713,4 @@ def train_predict(args):
     counties_predicted, predictions, learned_params = runner(params, devices, verbose, args)
 
     return counties_predicted, predictions, learned_params
+    
