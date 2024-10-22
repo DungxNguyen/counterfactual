@@ -8,6 +8,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--moving_window', type=int, default=0)
 parser.add_argument('--test', action='store_true')
 parser.add_argument('--root', type=str, default="./Data/Processed")
+parser.add_argument('--saved_root', type=str, default="./Data/Processed/online")
 parser.add_argument('--week', type=int, default=49)
 
 args = parser.parse_args()
@@ -51,7 +52,10 @@ print(pcr_data.shape)
 
 merged_dataset = pd.merge(pd.merge(data_selected,GHT,left_on='date', right_on="Week"),pcr_data, left_on='date', right_on="Fecha")
 merged_dataset.drop(columns=["Week", "date", "year", "Fecha", "epi_week", "region", "incremental", "covid-19 vacuna"], inplace=True)
-merged_dataset.to_csv(os.path.join(args.root, "{}_{}_moving.csv".format("test" if args.test else "train", args.moving_window)), index=None)
+
+if not os.path.exists(args.saved_root):
+    os.mkdir(args.saved_root)
+merged_dataset.to_csv(os.path.join(args.saved_root, "{}_{}_moving.csv".format("test" if args.test else "train", args.moving_window)), index=None)
 
 print(merged_dataset.shape[0] / 7)
 assert args.week == merged_dataset.shape[0] / 7

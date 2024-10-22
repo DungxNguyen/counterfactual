@@ -23,8 +23,6 @@ print("---- MAIN IMPORTS SUCCESSFUL -----")
 
 
 
-
-
 # define the prediction horizon
 DAYS_HEAD = 4*7  # 4 weeks ahead
 
@@ -405,8 +403,8 @@ def runner(params, devices, verbose, args):
                     fetch_county_data_covid(params['state'],params['county_id'],pred_week=params['pred_week'],batch_size=batch_size,noise_level=params['noise_level'])
             params['num_steps'] = seqlen
         elif params['disease']=='bogota':
-            train_dataset = SeqDataset("./Data/Processed/train_{}.csv".format(args.date), "cases")
-            test_dataset = SeqDataset("./Data/Processed/test_{}.csv".format(args.date), "cases")
+            train_dataset = SeqDataset("./Data/Processed/online/train_{}.csv".format(args.date), "cases")
+            test_dataset = SeqDataset("./Data/Processed/online/test_{}.csv".format(args.date), "cases")
 
             train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=500, shuffle=False)
             test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=500, shuffle=False)
@@ -507,9 +505,6 @@ def runner(params, devices, verbose, args):
                     best_loss = epoch_loss
                     print("current best loss is {}".format(best_loss))
                 print('epoch {} time (s): {:.2f}'.format(epi,time.time()- start))
-    
-
-
 
         ''' step 2: inference step  ''' 
         ''' upload best model in inference ''' 
@@ -558,7 +553,9 @@ def runner(params, devices, verbose, args):
         # calculate training and testing RMSE values
         all_rmses = []
         all_maes = []
+        all_mapes = []
         training_mae = []
+        all_mapes_train = []
         for state_idx, target_values in enumerate(y.unsqueeze(0)):
             target = torch.squeeze(target_values.detach()).numpy()
             predictions_train = torch.squeeze(predictions.detach()[state_idx]).cpu().numpy()
@@ -582,13 +579,19 @@ def runner(params, devices, verbose, args):
             plt.xlabel("TimeStamp")
             plt.ylabel("Mortality Number")
             plt.legend(["Ground-truth", "Predictions"])
-            fig.savefig(f"State_{state_idx}_{args.date}.png")
+            fig.savefig(os.path.join("Figure-Prediction", f"State_{state_idx}_{args.date}.png"))
             all_rmses.append(rmse_test)
             all_maes.append(mae_test)
+            all_mapes.append(np.mean(np.abs((target[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])] -
+                     predictions_train[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])])) / target[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])]) * 100)
+            all_mapes_train.append(np.mean(np.abs((target[:CONFIGS[params["disease"]]["train_days"]] -
+                     predictions_train[:CONFIGS[params["disease"]]["train_days"]])) / target[:CONFIGS[params["disease"]]["train_days"]]) * 100)
             training_mae.append(mae_train)
         print('RMSE: ', sum(all_rmses)/len(all_rmses))
         print('testing MAE: ', sum(all_maes)/len(all_maes))
         print('training MAE: ', sum(training_mae)/len(training_mae))
+        print('training MAPES', sum(all_mapes_train)/len(all_mapes_train))
+        print('testing MAPES: ', sum(all_mapes)/len(all_mapes))
 
         # we only care about the last predictions
         # predictions are weekly, so we only care about the last 4
@@ -615,8 +618,8 @@ def runner(params, devices, verbose, args):
             ax = fig.add_subplot(1,1,1)
             ax.plot(losses)
             # ax.set_ylim(2.5, 6.5)
-            pred_week = params['pred_week']
-            fig.savefig(FIGPATH+f'/losses_{pred_week}_{args.privacy}.png')
+            date = params['date']
+            fig.savefig(FIGPATH+f'/losses_{date}_{args.privacy}.png')
         print("-"*60)
         return counties_predicted, np.array(predictions), learned_params
 
@@ -634,7 +637,7 @@ def train_predict(args):
 
     global data, meta2
     # load the pre-processed transaction dataset and normalize the dataset
-    data = torch.load("./Data/Processed/transaction_private_lap_{}.pt".format(args.date)).to(torch.float32).unsqueeze(2)
+    data = torch.load("./Data/Processed/online/transaction_private_lap_{}.pt".format(args.date)).to(torch.float32).unsqueeze(2)
     data = torch.nn.functional.normalize(data,dim=0).to("cuda:0")
     meta2 = torch.eye(data.shape[0]).to("cuda:0")
 

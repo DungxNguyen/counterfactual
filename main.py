@@ -74,9 +74,5 @@ if __name__ == "__main__":
         except Exception as e:
             print(f'exception: did not work for {args.state} week {pred_ew}: '+ str(e) + '\n')
             traceback.print_exc()
-    
-
-    import itertools
-    from tqdm import tqdm
 
     run_all_weeks(copy(args))

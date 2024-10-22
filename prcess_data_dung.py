@@ -9,6 +9,7 @@ import os
 parser = argparse.ArgumentParser()
 parser.add_argument('--moving_window', type=int, default=0)
 parser.add_argument('--root', type=str, default="./Data/Processed")
+parser.add_argument('--saved_root', type=str, default="./Data/Processed/online")
 
 
 args = parser.parse_args()
@@ -35,4 +36,6 @@ for g_idx, item in tqdm(data_selected.groupby(["merch_postal_code"])):
     ret.append(item_new["spendamt_clipped"].values)
 
 final_ret = torch.from_numpy(np.array(ret))
-torch.save(final_ret, "./Data/Processed/transaction_private_lap_{}_moving.pt".format(args.moving_window))
+if not os.path.exists(args.saved_root):
+    os.mkdir(args.saved_root)
+torch.save(final_ret, os.path.join(args.saved_root, "transaction_private_lap_{}_moving.pt".format(args.moving_window)))
