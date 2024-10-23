@@ -10,14 +10,47 @@ conda env create -f enviroment.yml
 
 ## Training
 
-Step 1: Privatize the dataset by running the jupyet notebook "Pets_Input_Gen.ipynb" and put the generated file under the directory "./Data/Processed/"
-
-Step 2: Run the Data/Processed/process_rr_transaction.py file to transform the generated dataset into the aggregated transacation features, which will be saved as a ".pt" file under the directory "./Data/Processed/".
-
-Step 3: Run the following command to train and predict forecasting models for the bogota city
+### Quick Demo
+To quickly evaluate our method on the Bogota dataset, run the following command:
 
 ```bash
-python -u main.py -st MA -j -d 0 -ew 202036 --seed 1234 -m meta -di bogota
+bash run.sh 
 ```
 
-(Note you have to manually change the Line 42 to the data you generated in Step 2)
+If you want to acess our system with a user-friendly GUI: simply run the code:
+
+```python
+python index.py
+```
+
+### Detailed Steps
+Our pipeline consists of two steps:
+
+**Step 1: Data Preparation**
+We use two types of data sources:
+- **public dataset** such as Google Heath Trends, PCR, and so on
+- **private dataset**, i.e., transacation dataset
+
+To prepare the public dataset, use the following commands:
+```python
+python prepare_dataset.py --moving_window $i --week $train_week
+python prepare_dataset.py --moving_window $i --week $test_week --test
+```
+- The week parameter controls the length of the training period (default: 49 weeks starting from 2020-03-01).
+- The moving_window parameter specifies how many windows to expand from the given training period.
+- The --test flag extends the data by an additional four weeks, corresponding to the prediction horizon.
+
+To prepare the private dataset, use the following command:
+```python
+python prcess_data_dung.py --moving_window $i
+```
+- The moving_window parameter is used similarly here to control the expansion of windows.
+
+**Step 2: Data Preparation**
+
+After preparing the datasets, run the following command to perform epidemic simulation and prediction:
+
+
+```python
+python main.py -st MA -j -d 0 --seed 1234 -m meta -di bogota -date "${i}_moving"
+```
