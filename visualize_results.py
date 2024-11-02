@@ -3,13 +3,18 @@ import os
 
 def plot_predictions(target, predictions, rmse, rmse_test, state_idx, args):
     fig = plt.figure()
-    plt.plot(target)
-    plt.plot(predictions)
+    plt.plot(target[-4*7:])
+    plt.plot(predictions[-4*7:])
     plt.title('Training RMSE: {:.2f} Testing RMSE: {:.2f}'.format(rmse, rmse_test))
     plt.xlabel("TimeStamp")
     plt.ylabel("Mortality Number")
     plt.legend(["Ground-truth", "Predictions"])
-    fig.savefig(os.path.join("Figure-Prediction", f"State_{state_idx}_{args.date}.png"))
+    Delta = args.Delta
+    x = args.x
+    if Delta == 0:
+        fig.savefig(os.path.join("Figure-Prediction", f"State_{state_idx}_{args.date}.png"))
+    else:
+        fig.savefig(os.path.join("Figure-Prediction", f"State_{state_idx}_{args.date}_Delta_{Delta}_x_{x}.png"))
 
 
 def plot_losses(losses, params, args):

@@ -342,6 +342,71 @@ def build_simulator(params,devices,counties,seed_infection_status):
 
     return abm
 
+
+
+def forward_simulator_reduced(params,param_values,abm,training_num_steps,counties,devices, Delta, x):
+    ''' assumes abm contains only one simulator for covid (one county), and multiple for flu (multiple counties)'''
+
+    if params['joint']:
+        num_counties = len(counties)
+        predictions = torch.empty((num_counties,training_num_steps)).to(devices[0])
+
+        if params["model_name"] == "meta":
+            for time_step in range(training_num_steps):
+                # print(param_values.shape)
+                if time_step <= training_num_steps - (4 - Delta) * 7:
+                    params_epi = param_values
+                    param_t = params_epi[time_step//7,:]
+                else:
+                    params_epi = param_value * (100 - x) / 100
+                    param_t = params_epi[time_step//7,:]
+                seed_status = torch.Tensor([4,5,5,5,5,5,5,5,5,3])
+                # seed_status = torch.Tensor([0, 2, 0, 3, 0, 3, 0, 3, 0, 0])
+                _, pred_t = abm.step(time_step, param_t, seed_status)
+                predictions[:, time_step] = pred_t
+
+        else:       
+            for time_step in range(training_num_steps):
+                if 'time-varying' in params['model_name']:
+                    # print(param_values.shape)
+                    # input()
+                    param_t = param_values[:,time_step//7,:]
+                    # print(training_num_steps)
+                    # input("123123")
+                else:
+                    param_t = param_values
+                # go over each abm
+                for c in range(num_counties):
+                    model_device = abm[counties[c]].device
+                    population = abm[counties[c]].num_agents
+                    _, pred_t = abm[counties[c]].step(time_step, param_t[c].to(model_device))
+                    predictions[c,time_step] = pred_t.to(devices[0]) 
+    else:
+        num_counties = 1
+        param_values = param_values.squeeze(0)
+        predictions = []
+        
+        for time_step in range(training_num_steps):
+            if 'time-varying' in params['model_name']:
+                param_t = param_values[time_step//7,:]
+            else:
+                param_t = param_values
+            model_device = abm.device
+            _, pred_t = abm.step(time_step, param_t.to(model_device))
+            predictions.append(pred_t.to(devices[0]))
+        predictions = torch.stack(predictions,0).reshape(1,-1)  # num counties, seq len
+        
+    # post-process predictions for flu
+    # targets are weekly, so we have to convert from daily to weekly
+    if params['disease']=='Flu':
+        predictions = predictions.reshape(num_counties,-1,7).sum(2)
+    else:
+        predictions = predictions.reshape(num_counties,-1)
+
+    return predictions.unsqueeze(2)
+
+
+
 def forward_simulator(params,param_values,abm,training_num_steps,counties,devices):
     ''' assumes abm contains only one simulator for covid (one county), and multiple for flu (multiple counties)'''
 
@@ -568,6 +633,7 @@ def runner(params, devices, verbose, args, seed_infection_status):
         batch_predictions = []
         counties_predicted = []
         learned_params = []
+        print("Here")
         with torch.no_grad():
             for batch, (counties, meta, x, y) in enumerate(test_loader):
                 # construct abm for each forward pass
@@ -580,7 +646,8 @@ def runner(params, devices, verbose, args, seed_infection_status):
                 else:
                     param_values = param_model_forward(param_model,params,x,meta)
                 # forward simulator for several time steps
-                preds = forward_simulator(params,param_values,abm,num_step,counties,devices)
+                print("---------------------Reduced: ", params['Delta'], params['x'])
+                preds = forward_simulator_reduced(params,param_values,abm,num_step,counties,devices,params['Delta'], params['x'])
                 # print(preds[0])
                 batch_predictions.append(preds)
                 counties_predicted.extend(counties)
@@ -611,7 +678,7 @@ def runner(params, devices, verbose, args, seed_infection_status):
             plt.xlabel("TimeStamp")
             plt.ylabel("Mortality Number")
             plt.legend(["Ground-truth", "Predictions"])
-            fig.savefig(f"State_{state_idx}.png")
+            fig.savefig(f"State_{state_idx}_Delta_{args.Delta}_x_{args.x}.png")
         print(sum(all_rmses)/len(all_rmses))
         # we only care about the last predictions
         # predictions are weekly, so we only care about the last 4

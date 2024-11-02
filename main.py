@@ -53,6 +53,8 @@ if __name__ == "__main__":
     parser.add_argument('-da', '-dataset', default="./Data/Processed/county_data.csv")
     parser.add_argument('-date', default="03-03")
     parser.add_argument('--privacy', action="store_true")
+    parser.add_argument('--Delta', type=int, default=1)
+    parser.add_argument('-x', type=int, default=5)
     # parser.set_defaults(joint=True)  # make true when removing no joint
     parser.set_defaults(inference_only=False)  # make true when removing no joint
     args = parser.parse_args()

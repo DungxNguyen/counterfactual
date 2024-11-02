@@ -24,7 +24,7 @@ print("---- MAIN IMPORTS SUCCESSFUL -----")
 
 
 # define the prediction horizon
-DAYS_HEAD = 4*7  # 4 weeks ahead
+DAYS_HEAD = 19*7  # 29 weeks ahead
 
 # define the directory for saving the model
 SAVE_MODEL_PATH = './Models/'
@@ -362,6 +362,34 @@ def build_simulator(params,devices):
 
     return abm
 
+
+
+
+def forward_simulator_reduced(params,param_values,abm,training_num_steps,counties,devices, Delta, x):
+    if params['joint']:
+        num_counties = len(counties)
+        predictions = torch.empty((num_counties,training_num_steps)).to(devices[0])
+        if params["model_name"] == "meta":
+            for time_step in range(training_num_steps):
+                if time_step < training_num_steps - (19 - Delta) * 7:
+                # split the predicted epi-parameters of the neural network
+                    params_epi, seed_status, adjustment_matrix = param_values[0], param_values[1], param_values[2]
+                else:
+                    # reduce beta by x percent
+                    params_epi, seed_status, adjustment_matrix = param_values[0] , param_values[1], param_values[2] * (100 - x) / 100
+
+                # choose the epi-parameter according to the time step
+                param_t = params_epi[time_step//7,:]
+                # go simulation step
+                _, pred_t = abm.step(time_step, param_t, seed_status, adjustment_matrix)
+                # save the prediction
+                predictions[:, time_step] = pred_t
+        
+    predictions = predictions.reshape(num_counties,-1)
+    predictions = torch.sum(predictions, dim=0).unsqueeze(0)
+    return predictions.unsqueeze(2)
+
+
 def forward_simulator(params,param_values,abm,training_num_steps,counties,devices):
     if params['joint']:
         num_counties = len(counties)
@@ -410,7 +438,7 @@ def runner(params, devices, verbose, args):
             test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=500, shuffle=False)
 
             metas_train_dim = 1
-            X_train_dim = 5
+            X_train_dim = 11 
 
             params['num_steps'] = len(train_dataset)
 
@@ -521,6 +549,7 @@ def runner(params, devices, verbose, args):
             param_model = load_model(param_model,file_name,params['disease'],params['county_id'],params['pred_week'],devices[0], args)
 
         num_step = training_num_steps + DAYS_HEAD # adding number of prediction horizon to the simulation step
+        #num_step = training_num_steps + 8 * 7 # adding number of prediction horizon to the simulation step
         batch_predictions = []
         counties_predicted = []
         learned_params = []
@@ -538,7 +567,15 @@ def runner(params, devices, verbose, args):
                     param_values = param_model_forward(param_model,params,x,meta)
                 
                 # forward simulator for several time steps
-                preds = forward_simulator(params,param_values,abm,num_step,counties,devices)
+                Delta = args.Delta
+                xx = args.x
+                print("Reduced:", Delta, xx)
+                print("Num step:", num_step)
+                print("Batch:", batch)
+                if Delta == 0:
+                    preds = forward_simulator(params,param_values,abm,num_step,counties,devices)
+                else:
+                    preds = forward_simulator_reduced(params,param_values,abm,num_step,counties,devices, Delta, xx)
                 batch_predictions.append(preds)
                 counties_predicted.extend(counties)
                 if 'meta' in params["model_name"]:
@@ -573,7 +610,15 @@ def runner(params, devices, verbose, args):
             mae_test = np.mean(np.absolute(target[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])] -
                      predictions_train[CONFIGS[params["disease"]]["train_days"]:(CONFIGS[params["disease"]]["train_days"]+CONFIGS[params["disease"]]["test_days"])]))
 
+
             plot_predictions(target, predictions_train, rmse, rmse_test, state_idx, args)
+
+            if args.Delta == 0:
+                target.tofile("target.csv", sep=",")
+                predictions_train.tofile("prediction.csv", sep=",")
+            else:
+                predictions_train.tofile(f"prediction_{args.Delta}_{args.x}.csv", sep=",")
+
             
             all_rmses.append(rmse_test)
             all_maes.append(mae_test)
@@ -631,7 +676,7 @@ def train_predict(args):
         "bogota": {
             "num_patch": 16,
             "learning_rate": 5e-5,
-            "train_days": 343 + eval(args.date.split("_")[0]) * 7,
+            "train_days": 273 + eval(args.date.split("_")[0]) * 7,
             "test_days": 28,
             "num_pub_features": 1
         },
